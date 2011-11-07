@@ -14,6 +14,7 @@ static const char *vlc_http_standard_reply = "HTTP/1.1 200 OK\r\n"
 
 #define MAX_UDP_PROGRAM		100
 #define MAX_HTTP_STREAM		100
+#define MAX_UDP_IDLE_TIME	10
 
 enum {
 	HTTP_STREAM_STATUS_IDLE = 0,
@@ -38,9 +39,13 @@ struct udp_program_entry {
 	struct http_stream streams[MAX_HTTP_STREAM];
 	int max_stream_index;
 	int nr_streams;
+
+	time_t idle_start_time;
 };
 
 static struct udp_program_entry udp_program_table[MAX_UDP_PROGRAM];
+
+static void udp_program_destroy(struct udp_program_entry *p);
 
 static struct udp_program_entry *
 find_udp_program_entry(const char *udp_addr)
@@ -121,7 +126,22 @@ static void * udp_program_thread(void *data)
 	int i, rc, len;
 	char buf[UDP_PKG_SIZE];
 
+	pthread_detach(pthread_self());
+	p->idle_start_time = time(NULL);
 	while (1) {
+		/*
+		 * check for this udp quiting
+		 */
+		if (p->nr_streams <= 0) {
+			if (time(NULL) >= p->idle_start_time + MAX_UDP_IDLE_TIME) {
+				printf("%s: quit\n", p->udp_addr);
+				udp_program_destroy(p);
+				pthread_exit(NULL);
+			}
+			usleep(100000);
+			continue;
+		}
+
 		len = udp_read_data(p->udp_ctx, buf);
 		if (len <= 0) {
 			//printf("send out last data\n");
@@ -145,6 +165,11 @@ static void * udp_program_thread(void *data)
 					p->streams[i].status = HTTP_STREAM_STATUS_CLOSE;
 					p->streams[i].conn = NULL;
 					p->nr_streams--;
+					if (p->nr_streams <= 0) {
+						p->idle_start_time = time(NULL);
+						printf("%s: idle start time %s\n",
+							p->udp_addr, ctime(&p->idle_start_time));
+					}
 				}
 				p->streams[i].send_bytes += len;
 			}
@@ -209,6 +234,13 @@ static int udp_program_init(struct udp_program_entry *p, const char *udp_addr)
 	p->udp_addr = strdup(udp_addr);
 
 	return 0;
+}
+
+static void udp_program_destroy(struct udp_program_entry *p)
+{
+	udp_close(p->udp_ctx);
+	free(p->udp_addr);
+	memset(p, 0, sizeof(*p));
 }
 
 void stream_page_handler(struct mg_connection *conn,
