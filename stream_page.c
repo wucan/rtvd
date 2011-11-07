@@ -15,11 +15,20 @@ static const char *vlc_http_standard_reply = "HTTP/1.1 200 OK\r\n"
 #define MAX_UDP_PROGRAM		100
 #define MAX_HTTP_STREAM		100
 #define MAX_UDP_IDLE_TIME	10
+#define MAX_RATE_SEC		(1 << 6)
 
 enum {
 	HTTP_STREAM_STATUS_IDLE = 0,
 	HTTP_STREAM_STATUS_RUNNING,
 	HTTP_STREAM_STATUS_CLOSE,
+};
+
+
+struct pid_info {
+	uint32_t count;
+
+	uint16_t rate_count;
+	uint16_t rate_history[MAX_RATE_SEC]
 };
 
 struct http_stream {
@@ -41,6 +50,9 @@ struct udp_program_entry {
 	int nr_streams;
 
 	time_t idle_start_time;
+
+	struct pid_info pid_table[0x1FFF + 1];
+	uint16_t rate_index;
 };
 
 static struct udp_program_entry udp_program_table[MAX_UDP_PROGRAM];
@@ -125,6 +137,7 @@ static void * udp_program_thread(void *data)
 	struct udp_program_entry *p = (struct udp_program_entry *)data;
 	int i, rc, len;
 	char buf[UDP_PKG_SIZE];
+	time_t last_rate_time = 0;
 
 	pthread_detach(pthread_self());
 	p->idle_start_time = time(NULL);
@@ -153,6 +166,29 @@ static void * udp_program_thread(void *data)
 				buf[i + 3] = 0x00;
 			}
 			len = UDP_PKG_SIZE;
+		} else {
+			/*
+			 * track pid info
+			 */
+			time_t t = time(NULL);
+			for (i = 0; i < UDP_PKG_SIZE; i += 188) {
+				uint16_t pid = ((buf[i + 1] & 0x1F) << 8) | buf[i + 2];
+				p->pid_table[pid].count++;
+				p->pid_table[pid].rate_history[p->rate_index]++;
+			}
+
+			/* update rate time/index */
+			if (last_rate_time) {
+				if (t != last_rate_time) {
+					if (++p->rate_index >= MAX_RATE_SEC)
+						p->rate_index = 0;
+					for (i = 0; i <= 0x1FFF; i++)
+						p->pid_table[i].rate_history[p->rate_index] = 0;
+					last_rate_time = t;
+				}
+			} else {
+				last_rate_time = t;
+			}
 		}
 
 		for (i = 0; i <= p->max_stream_index; i++) {
@@ -319,6 +355,101 @@ void stream_info_handler(struct mg_connection *conn,
 		}
 	}
 	mg_printf(conn, "</table>");
+
+	int off = 0;
+	char pid_info[1024];
+	mg_printf(conn, "<p>pid information:</p>");
+	mg_printf(conn,
+		"<table border=\"1\"><tr><th>udp stream</th><th>pid</th></tr>");
+	for (i = 0; i < MAX_UDP_PROGRAM; i++) {
+		if (udp_program_table[i].nr_streams) {
+			for (j = 0; j <= 0x1FFF; j++) {
+				if (udp_program_table[i].pid_table[j].count) {
+					off += sprintf(pid_info + off, "%d:%d ",
+						j,
+						udp_program_table[i].pid_table[j].count);
+				}
+			}
+			mg_printf(conn, "<tr><td>%s</td><td>%s</td></tr>",
+				udp_program_table[i].udp_addr, pid_info);
+		}
+	}
+	mg_printf(conn, "</table>");
+
 	mg_printf(conn, "</body></html>");
+}
+
+static const char *svg_standard_reply = "HTTP/1.1 200 OK\r\n"
+"Content-Type: text/xml\r\n"
+"Connection: close\r\n\n";
+
+void stream_static_handler(struct mg_connection *conn,
+                   const struct mg_request_info *ri, void *data)
+{
+	static char sbuf[1024 * 40];
+	struct udp_program_entry *p = &udp_program_table[0];
+	int his_idx, y = 60, off = 0, pid;
+	int rate_index = p->rate_index;
+	time_t base_time = time(NULL) - rate_index;
+
+	if (rate_index <= 2)
+		return;
+
+	mg_printf(conn, "%s", svg_standard_reply);
+
+	off += sprintf(sbuf + off,
+		"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+		"<!DOCTYPE svg>"
+		"<svg width=\"800px\" height=\"600px\" xmlns=\"http://www.w3.org/2000/svg\"><g>");
+
+	off += sprintf(sbuf + off,
+		"<text font-size=\"16\" x=\"10\" y=\"20\">base time: %s</text>",
+		ctime(&base_time));
+	for (pid = 0; pid <= 0x1FFF; pid++) {
+		if (!p->pid_table[pid].count)
+			continue;
+
+		/* pid and timeline */
+		off += sprintf(sbuf + off,
+			"<text font-size=\"16\" x=\"5\" y=\"%d\">%d</text>",
+			y - 2, pid);
+		off += sprintf(sbuf + off,
+			"<rect x=\"40\" y=\"%d\" width=\"600\" height=\"2\" style=\"fill:#00ff00\" />",
+			y);
+
+		int x = 50;
+		uint32_t rate_sum = 0;
+		for (his_idx = 0; his_idx < rate_index; his_idx++) {
+			int r = p->pid_table[pid].rate_history[his_idx];
+			rate_sum += r;
+			if (r >= 60) {
+				int z = r / 60;
+				char *z_style = "style=\"fill:#880000\"";
+				if (z >= 60)
+					z_style = "style=\"fill:#FF0000\"";
+				off += sprintf(sbuf + off,
+					"<rect x=\"%d\" y=\"%d\" width=\"3\" height=\"%d\" style=\"fill:#AAAAAA\" />",
+					x, y -  r % 60, r % 60);
+				off += sprintf(sbuf + off,
+				"<rect x=\"%d\" y=\"%d\" width=\"1\" height=\"%d\" %s />",
+					x + 1, y -  z % 60, z % 60, z_style);
+			} else {
+				off += sprintf(sbuf + off,
+					"<rect x=\"%d\" y=\"%d\" width=\"3\" height=\"%d\" />",
+					x, y - r, r);
+			}
+			x += 5;
+		}
+		uint32_t rate_avg = rate_sum / rate_index;
+		off += sprintf(sbuf + off,
+			"<text font-size=\"16\" x=\"%d\" y=\"%d\">avg=%d bps</text>",
+			50 + (5 * MAX_RATE_SEC), y - 2, rate_avg * 188 * 8);
+
+		y += 60 + 10;
+	}
+
+	off += sprintf(sbuf + off, "</g></svg>");
+
+	mg_write(conn, sbuf, off);
 }
 
