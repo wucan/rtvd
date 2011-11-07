@@ -4,6 +4,7 @@
 
 #include "mongoose.h"
 #include "udp.h"
+#include "rtvd.h"
 
 
 static const char *vlc_http_standard_reply = "HTTP/1.1 200 OK\r\n"
@@ -339,8 +340,8 @@ void stream_info_handler(struct mg_connection *conn,
 	mg_printf(conn, "%s", standard_reply);
 	mg_printf(conn, "<html><body>");
 
-	mg_printf(conn, "<h2>rtvd version 0.01, support %d udp, %d http per udp</h2><hr>",
-		MAX_UDP_PROGRAM, MAX_HTTP_STREAM);
+	mg_printf(conn, "<h2>rtvd version %s, support %d udp, %d http per udp</h2><hr>",
+		RTVD_VERSION, MAX_UDP_PROGRAM, MAX_HTTP_STREAM);
 	mg_printf(conn, "<p>stream information:</p>");
 	mg_printf(conn, "<table border=\"1\"><tr><th>udp stream</th><th>slot number</th><th>http client</th><th>send bytes</th><th>start time</th></tr>");
 	for (i = 0; i < MAX_UDP_PROGRAM; i++) {

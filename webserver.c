@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "mongoose.h"
+#include "rtvd.h"
+
 
 static const char *standard_reply = "HTTP/1.1 200 OK\r\n"
 "Conntent-Type: text/html\r\n"
@@ -154,7 +156,7 @@ show_post(struct mg_connection *conn,
 
 int main(int argc, char **argv)
 {
-    printf("rtvd 0.01\n");
+    printf("rtvd %s\n", RTVD_VERSION);
 
     char *port = "8080";
 
