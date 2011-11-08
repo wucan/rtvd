@@ -388,10 +388,24 @@ void stream_static_handler(struct mg_connection *conn,
                    const struct mg_request_info *ri, void *data)
 {
 	static char sbuf[1024 * 40];
-	struct udp_program_entry *p = &udp_program_table[0];
+	struct udp_program_entry *p = NULL;
 	int his_idx, y = 60, off = 0, pid;
-	int rate_index = p->rate_index;
-	time_t base_time = time(NULL) - rate_index;
+	int rate_index;
+	time_t base_time;
+	char *udp_addr;
+
+	/*
+	 * which udp program entry to check
+	 */
+	udp_addr = mg_get_var(conn, "udp");
+	if (udp_addr) {
+		p = find_udp_program_entry(udp_addr);
+	}
+	if (!p)
+		p = &udp_program_table[0];
+
+	rate_index = p->rate_index;
+	base_time = time(NULL) - rate_index;
 
 	if (rate_index <= 2)
 		return;
