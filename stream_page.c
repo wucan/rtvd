@@ -186,7 +186,7 @@ static void * udp_program_thread(void *data)
 {
 	struct udp_program_entry *p = (struct udp_program_entry *)data;
 	int i, rc, len;
-	char buf[UDP_PKG_SIZE];
+	unsigned char buf[UDP_PKG_SIZE];
 	time_t last_rate_time = 0;
 
 	pthread_detach(pthread_self());
