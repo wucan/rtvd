@@ -46,6 +46,7 @@ struct udp_program_entry {
 	int sock;
 	pthread_t thread;
 
+	pthread_mutex_t mutex;
 	struct http_stream streams[MAX_HTTP_STREAM];
 	int max_stream_index;
 	int nr_streams;
@@ -79,7 +80,9 @@ add_http_stream(struct udp_program_entry *p,
 	struct mg_connection *conn, struct mg_request_info *ri)
 {
 	int i;
+	struct http_stream *s = NULL;
 
+	pthread_mutex_lock(&p->mutex);
 	for (i = 0; i < MAX_HTTP_STREAM; i++) {
 		if (p->streams[i].status != HTTP_STREAM_STATUS_RUNNING) {
 			printf("add http stream in slot #%d of udp program %s\n",
@@ -91,11 +94,23 @@ add_http_stream(struct udp_program_entry *p,
 			p->streams[i].status = HTTP_STREAM_STATUS_RUNNING;
 			p->max_stream_index = MAX(i, p->max_stream_index);
 			p->nr_streams++;
-			return &p->streams[i];
+			s = &p->streams[i];
+			break;
 		}
 	}
+	pthread_mutex_unlock(&p->mutex);
 
-	return NULL;
+	return s;
+}
+
+static void remove_http_stream(struct udp_program_entry *p,
+		struct http_stream *s)
+{
+	pthread_mutex_lock(&p->mutex);
+	s->status = HTTP_STREAM_STATUS_CLOSE;
+	s->conn = NULL;
+	p->nr_streams--;
+	pthread_mutex_unlock(&p->mutex);
 }
 
 #define UDP_PKG_SIZE		(188 * 7)
@@ -199,9 +214,7 @@ static void * udp_program_thread(void *data)
 				rc = mg_write(p->streams[i].conn, buf, len);
 				if (rc <= 0) {
 					printf("http stream %s closed!\n", p->udp_addr);
-					p->streams[i].status = HTTP_STREAM_STATUS_CLOSE;
-					p->streams[i].conn = NULL;
-					p->nr_streams--;
+					remove_http_stream(p, &p->streams[i]);
 					if (p->nr_streams <= 0) {
 						p->idle_start_time = time(NULL);
 						printf("%s: idle start time %s\n",
@@ -269,6 +282,7 @@ static int udp_program_init(struct udp_program_entry *p, const char *udp_addr)
 	}
 	p->thread = thr;
 	p->udp_addr = strdup(udp_addr);
+	pthread_mutex_init(&p->mutex, NULL);
 
 	return 0;
 }
@@ -277,6 +291,7 @@ static void udp_program_destroy(struct udp_program_entry *p)
 {
 	udp_close(p->udp_ctx);
 	free(p->udp_addr);
+	pthread_mutex_destroy(&p->mutex);
 	memset(p, 0, sizeof(*p));
 }
 
