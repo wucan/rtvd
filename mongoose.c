@@ -4384,3 +4384,23 @@ int mg_set_non_blocking_mode(struct mg_connection *conn)
 	return set_non_blocking_mode(conn->client.sock);
 }
 
+int mg_set_recv_buf_size(struct mg_connection *conn, int size)
+{
+	if (setsockopt(conn->client.sock, SOL_SOCKET, SO_RCVBUF,
+				(const char*)&size, sizeof(size)) < 0) {
+		return -1;
+	}
+
+	return 0;
+}
+
+int mg_set_send_buf_size(struct mg_connection *conn, int size)
+{
+	if (setsockopt(conn->client.sock, SOL_SOCKET, SO_SNDBUF,
+				(const char*)&size, sizeof(size)) < 0) {
+		return -1;
+	}
+
+	return 0;
+}
+
