@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <errno.h>
 
 #include "mongoose.h"
 #include "udp.h"
@@ -37,6 +38,7 @@ struct http_stream {
 	struct mg_request_info *ri;
 	int status;
 	int send_bytes;
+	int discard_bytes;
 	time_t start_time;
 };
 
@@ -121,7 +123,9 @@ add_http_stream(struct udp_program_entry *p,
 		if (p->streams[i].status != HTTP_STREAM_STATUS_RUNNING) {
 			printf("add http stream in slot #%d of udp program %s\n",
 				i, p->udp_addr);
+			mg_set_non_blocking_mode(conn);
 			p->streams[i].send_bytes = 0;
+			p->streams[i].discard_bytes = 0;
 			p->streams[i].start_time = time(NULL);
 			p->streams[i].conn = conn;
 			p->streams[i].ri = ri;
@@ -247,6 +251,10 @@ static void * udp_program_thread(void *data)
 				//printf("%s: send %d data to slot #%d\n", p->udp_addr, len, i);
 				rc = mg_write(p->streams[i].conn, buf, len);
 				if (rc <= 0) {
+					if (errno == EAGAIN) {
+						p->streams[i].discard_bytes += len;
+						continue;
+					}
 					printf("http stream %s closed!\n", p->udp_addr);
 					remove_http_stream(p, &p->streams[i]);
 					if (p->nr_streams <= 0) {
@@ -411,15 +419,15 @@ void stream_info_handler(struct mg_connection *conn,
 	mg_printf(conn, "<h2>rtvd version %s, support %d udp, %d http per udp</h2><hr>",
 		RTVD_VERSION, MAX_UDP_PROGRAM, MAX_HTTP_STREAM);
 	mg_printf(conn, "<p>stream information:</p>");
-	mg_printf(conn, "<table border=\"1\"><tr><th>udp stream</th><th>slot number</th><th>http client</th><th>send bytes</th><th>start time</th></tr>");
+	mg_printf(conn, "<table border=\"1\"><tr><th>udp stream</th><th>slot number</th><th>http client</th><th>send/discard bytes</th><th>start time</th></tr>");
 	for (i = 0; i < MAX_UDP_PROGRAM; i++) {
 		for (j = 0; j <= udp_program_table[i].max_stream_index; j++) {
 			if (udp_program_table[i].streams[j].conn) {
 				inaddr.s_addr = htonl(udp_program_table[i].streams[j].ri->remote_ip);
 				sprintf(remote, "%s:%d", inet_ntoa(inaddr),
 					udp_program_table[i].streams[j].ri->remote_port);
-				mg_printf(conn, "<tr><td>%s</td><td>%d</td><td>%s</td><td>%d</td><td>%s</td></tr>",
-					udp_program_table[i].udp_addr, j, remote, udp_program_table[i].streams[j].send_bytes, ctime(&udp_program_table[i].streams[j].start_time));
+				mg_printf(conn, "<tr><td>%s</td><td>%d</td><td>%s</td><td>%d/%d</td><td>%s</td></tr>",
+					udp_program_table[i].udp_addr, j, remote, udp_program_table[i].streams[j].send_bytes, udp_program_table[i].streams[j].discard_bytes, ctime(&udp_program_table[i].streams[j].start_time));
 			}
 		}
 	}
