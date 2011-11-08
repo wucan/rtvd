@@ -41,6 +41,7 @@ struct http_stream {
 };
 
 struct udp_program_entry {
+	int refcnt;
 	const char *udp_addr;
 	struct udp_context *udp_ctx;
 	int sock;
@@ -58,21 +59,54 @@ struct udp_program_entry {
 };
 
 static struct udp_program_entry udp_program_table[MAX_UDP_PROGRAM];
+static pthread_mutex_t prog_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static void udp_program_destroy(struct udp_program_entry *p);
+static int udp_program_destroy(struct udp_program_entry *p);
 
 static struct udp_program_entry *
-find_udp_program_entry(const char *udp_addr)
+get_udp_program(const char *udp_addr)
 {
 	int i;
+	struct udp_program_entry *p = NULL;
 
+	pthread_mutex_lock(&prog_mutex);
 	for (i = 0; i < MAX_UDP_PROGRAM; i++) {
 		if (udp_program_table[i].udp_addr &&
-			!strcmp(udp_program_table[i].udp_addr, udp_addr))
-			return &udp_program_table[i];
+			!strcmp(udp_program_table[i].udp_addr, udp_addr)) {
+			p = &udp_program_table[i];
+			p->refcnt++;
+			break;
+		}
 	}
+	pthread_mutex_unlock(&prog_mutex);
 
-	return NULL;
+	return p;
+}
+
+static struct udp_program_entry * get_first_udp_program()
+{
+	int i;
+	struct udp_program_entry *p = NULL;
+
+	pthread_mutex_lock(&prog_mutex);
+	for (i = 0; i < MAX_UDP_PROGRAM; i++) {
+		if (udp_program_table[i].udp_addr &&
+			udp_program_table[i].udp_addr != 1) {
+			p = &udp_program_table[i];
+			p->refcnt++;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&prog_mutex);
+
+	return p;
+}
+
+static void put_udp_program(struct udp_program_entry *p)
+{
+	pthread_mutex_lock(&prog_mutex);
+	p->refcnt--;
+	pthread_mutex_unlock(&prog_mutex);
 }
 
 static struct http_stream *
@@ -164,8 +198,8 @@ static void * udp_program_thread(void *data)
 		if (p->nr_streams <= 0) {
 			if (time(NULL) >= p->idle_start_time + MAX_UDP_IDLE_TIME) {
 				printf("%s: quit\n", p->udp_addr);
-				udp_program_destroy(p);
-				pthread_exit(NULL);
+				if (udp_program_destroy(p))
+					pthread_exit(NULL);
 			}
 			usleep(100000);
 			continue;
@@ -232,20 +266,28 @@ static void * udp_program_thread(void *data)
 static struct udp_program_entry * get_free_udp_program()
 {
 	int i;
+	struct udp_program_entry *p = NULL;
 
+	pthread_mutex_lock(&prog_mutex);
 	for (i = 0; i < MAX_UDP_PROGRAM; i++) {
 		if (!udp_program_table[i].udp_addr) {
 			udp_program_table[i].udp_addr = 1; // mark it used
-			return &udp_program_table[i];
+			p = &udp_program_table[i];
+			p->refcnt++;
+			break;
 		}
 	}
+	pthread_mutex_unlock(&prog_mutex);
 
-	return NULL;
+	return p;
 }
 
 static void put_free_udp_program(struct udp_program_entry *p)
 {
+	pthread_mutex_lock(&prog_mutex);
 	p->udp_addr = 0; // reset it
+	p->refcnt--;
+	pthread_mutex_unlock(&prog_mutex);
 }
 
 static int udp_program_init(struct udp_program_entry *p, const char *udp_addr)
@@ -283,16 +325,26 @@ static int udp_program_init(struct udp_program_entry *p, const char *udp_addr)
 	p->thread = thr;
 	p->udp_addr = strdup(udp_addr);
 	pthread_mutex_init(&p->mutex, NULL);
+	p->refcnt = 1;
 
 	return 0;
 }
 
-static void udp_program_destroy(struct udp_program_entry *p)
+static int udp_program_destroy(struct udp_program_entry *p)
 {
+	pthread_mutex_lock(&prog_mutex);
+	if (p->refcnt > 1) {
+		pthread_mutex_unlock(&prog_mutex);
+		return 0;
+	}
+
 	udp_close(p->udp_ctx);
 	free(p->udp_addr);
 	pthread_mutex_destroy(&p->mutex);
 	memset(p, 0, sizeof(*p));
+	pthread_mutex_unlock(&prog_mutex);
+
+	return 1;
 }
 
 void stream_page_handler(struct mg_connection *conn,
@@ -318,7 +370,7 @@ void stream_page_handler(struct mg_connection *conn,
 	/*
 	 * find/create udp_program_entry
 	 */
-	udp_prog = find_udp_program_entry(udp_addr);
+	udp_prog = get_udp_program(udp_addr);
 	if (!udp_prog) {
 		udp_prog = get_free_udp_program();
 		rc = udp_program_init(udp_prog, udp_addr);
@@ -333,6 +385,7 @@ void stream_page_handler(struct mg_connection *conn,
 	 * put this http connection to udp_program_entry and playing
 	 */
 	http_stream = add_http_stream(udp_prog, conn, ri);
+	put_udp_program(udp_prog);
 	if (http_stream) {
 		while (http_stream->status == HTTP_STREAM_STATUS_RUNNING) {
 			sleep(1);
@@ -414,16 +467,20 @@ void stream_static_handler(struct mg_connection *conn,
 	 */
 	udp_addr = mg_get_var(conn, "udp");
 	if (udp_addr) {
-		p = find_udp_program_entry(udp_addr);
+		p = get_udp_program(udp_addr);
 	}
 	if (!p)
-		p = &udp_program_table[0];
+		p = get_first_udp_program();
+	if (!p)
+		return;
 
 	rate_index = p->rate_index;
 	base_time = time(NULL) - rate_index;
 
-	if (rate_index <= 2)
+	if (rate_index <= 2) {
+		put_udp_program(p);
 		return;
+	}
 
 	mg_printf(conn, "%s", svg_standard_reply);
 
@@ -477,6 +534,8 @@ void stream_static_handler(struct mg_connection *conn,
 
 		y += 60 + 10;
 	}
+
+	put_udp_program(p);
 
 	off += sprintf(sbuf + off, "</g></svg>");
 
