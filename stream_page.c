@@ -412,6 +412,8 @@ void stream_info_handler(struct mg_connection *conn,
 	int i, j;
 	char remote[64];
 	struct in_addr inaddr;
+	struct udp_program_entry *p;
+	struct http_stream *s;
 
 	mg_printf(conn, "%s", standard_reply);
 	mg_printf(conn, "<html><body>");
@@ -421,13 +423,15 @@ void stream_info_handler(struct mg_connection *conn,
 	mg_printf(conn, "<p>stream information:</p>");
 	mg_printf(conn, "<table border=\"1\"><tr><th>udp stream</th><th>slot number</th><th>http client</th><th>send/discard bytes</th><th>start time</th></tr>");
 	for (i = 0; i < MAX_UDP_PROGRAM; i++) {
+		p = &udp_program_table[i];
 		for (j = 0; j <= udp_program_table[i].max_stream_index; j++) {
-			if (udp_program_table[i].streams[j].conn) {
-				inaddr.s_addr = htonl(udp_program_table[i].streams[j].ri->remote_ip);
+			s = &p->streams[j];
+			if (s->conn) {
+				inaddr.s_addr = htonl(s->ri->remote_ip);
 				sprintf(remote, "%s:%d", inet_ntoa(inaddr),
-					udp_program_table[i].streams[j].ri->remote_port);
+					s->ri->remote_port);
 				mg_printf(conn, "<tr><td>%s</td><td>%d</td><td>%s</td><td>%d/%d</td><td>%s</td></tr>",
-					udp_program_table[i].udp_addr, j, remote, udp_program_table[i].streams[j].send_bytes, udp_program_table[i].streams[j].discard_bytes, ctime(&udp_program_table[i].streams[j].start_time));
+					p->udp_addr, j, remote, s->send_bytes, s->discard_bytes, ctime(&s->start_time));
 			}
 		}
 	}
@@ -439,16 +443,17 @@ void stream_info_handler(struct mg_connection *conn,
 	mg_printf(conn,
 		"<table border=\"1\"><tr><th>udp stream</th><th>pid</th></tr>");
 	for (i = 0; i < MAX_UDP_PROGRAM; i++) {
-		if (udp_program_table[i].nr_streams) {
+		p = &udp_program_table[i];
+		if (p->nr_streams) {
 			for (j = 0; j <= 0x1FFF; j++) {
-				if (udp_program_table[i].pid_table[j].count) {
+				if (p->pid_table[j].count) {
 					off += sprintf(pid_info + off, "%d:%d ",
 						j,
-						udp_program_table[i].pid_table[j].count);
+						p->pid_table[j].count);
 				}
 			}
 			mg_printf(conn, "<tr><td>%s</td><td>%s</td></tr>",
-				udp_program_table[i].udp_addr, pid_info);
+				p->udp_addr, pid_info);
 		}
 	}
 	mg_printf(conn, "</table>");
