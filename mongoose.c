@@ -4379,3 +4379,8 @@ unsigned short web_get_conn_return_code(struct mg_connection *conn)
     return ret;
 }
 
+int mg_set_non_blocking_mode(struct mg_connection *conn)
+{
+	return set_non_blocking_mode(conn->client.sock);
+}
+

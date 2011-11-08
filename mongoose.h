@@ -234,6 +234,7 @@ int  web_get_conn_keep_alive(struct mg_connection *conn);
 int web_set_conn_keep_alive(struct mg_connection *conn, int value);
 int web_set_conn_return_code(struct mg_connection *conn, unsigned short value);
 unsigned short web_get_conn_return_code(struct mg_connection *conn);
+int mg_set_non_blocking_mode(struct mg_connection *conn);
 
 
 #ifdef __cplusplus
