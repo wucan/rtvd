@@ -153,39 +153,6 @@ static void remove_http_stream(struct udp_program_entry *p,
 
 #define UDP_PKG_SIZE		(188 * 7)
 
-static int udp_read_data(struct udp_context *udp_ctx, void *buf)
-{
-	int sock = udp_ctx->sock;
-	int from_addr_len = sizeof(struct sockaddr_in);
-	int len;
-	int rc;
-	struct timeval to;
-	fd_set read_set;
-
-	to.tv_sec = 1;
-	to.tv_usec = 0;
-	FD_ZERO(&read_set);
-	FD_SET(sock, &read_set);
-
-	rc = select(sock + 1, &read_set, NULL, NULL, &to);
-	if (rc > 0) {
-		len = recvfrom(sock, buf, UDP_PKG_SIZE, 0,
-			(struct sockaddr *)&udp_ctx->m_addr, (socklen_t *)&from_addr_len);
-		//hex_dump("udp data", buf, 200);
-		return len;
-	} else if (rc == 0) {
-		// timeout
-		return 0;
-	} else {
-		// error
-		return -1;
-	}
-
-	// can't reach here!
-
-	return 0;
-}
-
 static void * udp_program_thread(void *data)
 {
 	struct udp_program_entry *p = (struct udp_program_entry *)data;
@@ -209,7 +176,7 @@ static void * udp_program_thread(void *data)
 			continue;
 		}
 
-		len = udp_read_data(p->udp_ctx, buf);
+		len = udp_read_data(p->udp_ctx, buf, UDP_PKG_SIZE);
 		if (len <= 0) {
 			//printf("send out last data\n");
 			memset(buf, 0xFF, UDP_PKG_SIZE);

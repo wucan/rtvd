@@ -15,6 +15,7 @@ struct udp_context {
 
 struct udp_context * udp_open(char *ip, short port);
 void udp_close(struct udp_context *ctx);
+int udp_read_data(struct udp_context *udp_ctx, void *buf, int size);
 
 
 #endif /* _UDP_H_ */

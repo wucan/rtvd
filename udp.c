@@ -86,3 +86,35 @@ void udp_close(struct udp_context *ctx)
 	free(ctx);
 }
 
+int udp_read_data(struct udp_context *udp_ctx, void *buf, int size)
+{
+	int sock = udp_ctx->sock;
+	int from_addr_len = sizeof(struct sockaddr_in);
+	int len;
+	int rc;
+	struct timeval to;
+	fd_set read_set;
+
+	to.tv_sec = 1;
+	to.tv_usec = 0;
+	FD_ZERO(&read_set);
+	FD_SET(sock, &read_set);
+
+	rc = select(sock + 1, &read_set, NULL, NULL, &to);
+	if (rc > 0) {
+		len = recvfrom(sock, buf, size, 0,
+			(struct sockaddr *)&udp_ctx->m_addr, (socklen_t *)&from_addr_len);
+		return len;
+	} else if (rc == 0) {
+		// timeout
+		return 0;
+	} else {
+		// error
+		return -1;
+	}
+
+	// can't reach here!
+
+	return 0;
+}
+
