@@ -1,3 +1,5 @@
+rtvd - deliver udp stream to http clients
+
 run-rtvd.bat:
 启动脚本，第一个命令行参数为http服务器的监听端口，默认为8080
 
