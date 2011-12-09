@@ -53,6 +53,7 @@ struct udp_program_entry {
 	struct http_stream streams[MAX_HTTP_STREAM];
 	int max_stream_index;
 	int nr_streams;
+	int nr_users;
 
 	time_t idle_start_time;
 
@@ -111,6 +112,23 @@ static void put_udp_program(struct udp_program_entry *p)
 	pthread_mutex_unlock(&prog_mutex);
 }
 
+static void inc_udp_program_user(struct udp_program_entry *p)
+{
+	pthread_mutex_lock(&p->mutex);
+	p->nr_users++;
+	pthread_mutex_unlock(&p->mutex);
+}
+
+static void dec_udp_program_user(struct udp_program_entry *p)
+{
+	pthread_mutex_lock(&p->mutex);
+	if (p->nr_users == 1)
+		p->idle_start_time = time(NULL);
+	if (p->nr_users > 0)
+		p->nr_users--;
+	pthread_mutex_unlock(&p->mutex);
+}
+
 static struct http_stream *
 add_http_stream(struct udp_program_entry *p,
 	struct mg_connection *conn, struct mg_request_info *ri)
@@ -166,7 +184,7 @@ static void * udp_program_thread(void *data)
 		/*
 		 * check for this udp quiting
 		 */
-		if (p->nr_streams <= 0) {
+		if (p->nr_streams <= 0 && p->nr_users <= 0) {
 			if (time(NULL) >= p->idle_start_time + MAX_UDP_IDLE_TIME) {
 				printf("%s: quit\n", p->udp_addr);
 				if (udp_program_destroy(p))
@@ -532,6 +550,93 @@ void stream_pcr_handler(struct mg_connection *conn,
 	mg_printf(conn, "</head><body>");
 	mg_printf(conn, "<div id=\"flipboard\"></div>");
 	mg_printf(conn, "<div id=\"error\"></div>");
+	mg_printf(conn, "<button id=\"ss_button\">Start</button>");
 	mg_printf(conn, "</body></html>");
+}
+
+static const char *ajax_reply_start =
+	"HTTP/1.1 200 0K\r\n"
+	"Cache: no-cache\r\n"
+	"Content-Type: application/x-javascript\r\n"
+	"\r\n";
+
+static void get_qsvar(const struct mg_request_info *request_info,
+				const char *name, char *dst, size_t dst_len)
+{
+	const char *qs = request_info->query_string;
+	mg_get_var_3(qs, strlen(qs == NULL ? "" : qs), name, dst, dst_len);
+}
+
+// If "callback" param is present in query string, this is JSONP call.
+// Return 1 in this case, or 0 if "callback" is not specified.
+// Wrap an output in Javascript function call.
+static int handle_jsonp(struct mg_connection *conn,
+			const struct mg_request_info *request_info)
+{
+	char cb[64];
+
+	get_qsvar(request_info, "callback", cb, sizeof(cb));
+	if (cb[0] != '\0') {
+		mg_printf(conn, "%s(", cb);
+	}
+
+	return cb[0] == '\0' ? 0 : 1;
+}
+
+void stream_start_flow_handler(struct mg_connection *conn,
+						const struct mg_request_info *ri, void *data)
+{
+	int is_jsonp;
+	char udp[128];
+	struct udp_program_entry *udp_prog;
+
+	/* response header */
+	mg_printf(conn, "%s", ajax_reply_start);
+	is_jsonp = handle_jsonp(conn, ri);
+
+	/* start udp program if needed */
+	get_qsvar(ri, "udp", udp, sizeof(udp));
+	udp_prog = get_udp_program(udp);
+	if (!udp_prog) {
+		udp_prog = get_free_udp_program();
+		int rc = udp_program_init(udp_prog, udp);
+		if (rc) {
+			put_free_udp_program(udp_prog);
+			goto error_out;
+		}
+	}
+	inc_udp_program_user(udp_prog);
+	put_udp_program(udp_prog);
+
+error_out:
+	/* response tail */
+	if (is_jsonp) {
+		mg_printf(conn, "%s", ")");
+	}
+}
+
+void stream_stop_flow_handler(struct mg_connection *conn,
+						const struct mg_request_info *ri, void *data)
+{
+	int is_jsonp;
+	char udp[128];
+	struct udp_program_entry *udp_prog;
+
+	/* response header */
+	mg_printf(conn, "%s", ajax_reply_start);
+	is_jsonp = handle_jsonp(conn, ri);
+
+	/* check udp program presened and stop it */
+	get_qsvar(ri, "udp", udp, sizeof(udp));
+	udp_prog = get_udp_program(udp);
+	if (udp_prog) {
+		dec_udp_program_user(udp_prog);
+		put_udp_program(udp_prog);
+	}
+
+	/* response tail */
+	if (is_jsonp) {
+		mg_printf(conn, "%s", ")");
+	}
 }
 
