@@ -36,6 +36,7 @@ pcr.stopPCRFlow = function() {
 };
 
 pcr.startstopPCRFlow = function(ev) {
+	pcr.udp = document.getElementById('udp').value
 	var btn = ev.target;
 	if (btn.innerHTML == "Start") {
 		pcr.startPCRFlow();

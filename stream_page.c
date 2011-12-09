@@ -550,6 +550,7 @@ void stream_pcr_handler(struct mg_connection *conn,
 	mg_printf(conn, "</head><body>");
 	mg_printf(conn, "<div id=\"flipboard\"></div>");
 	mg_printf(conn, "<div id=\"error\"></div>");
+	mg_printf(conn, "<p>UDP:<input id=\"udp\" value=\"127.0.0.1:1234\" />");
 	mg_printf(conn, "<button id=\"ss_button\">Start</button>");
 	mg_printf(conn, "</body></html>");
 }
