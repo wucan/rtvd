@@ -522,3 +522,16 @@ void stream_static_handler(struct mg_connection *conn,
 	mg_write(conn, sbuf, off);
 }
 
+void stream_pcr_handler(struct mg_connection *conn,
+						const struct mg_request_info *ri, void *data)
+{
+	mg_printf(conn, "%s", standard_reply);
+	mg_printf(conn, "<html><head>");
+	mg_printf(conn, "<script src=\"js/jquery.js\"></script>");
+	mg_printf(conn, "<script src=\"js/pcr.js\"></script>");
+	mg_printf(conn, "</head><body>");
+	mg_printf(conn, "<div id=\"flipboard\"></div>");
+	mg_printf(conn, "<div id=\"error\"></div>");
+	mg_printf(conn, "</body></html>");
+}
+

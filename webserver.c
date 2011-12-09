@@ -20,6 +20,8 @@ extern void stream_info_handler(struct mg_connection *conn,
                    const struct mg_request_info *ri, void *data);
 extern void stream_static_handler(struct mg_connection *conn,
                    const struct mg_request_info *ri, void *data);
+extern void stream_pcr_handler(struct mg_connection *conn,
+                   const struct mg_request_info *ri, void *data);
 
 static void
 test_error(struct mg_connection *conn, const struct mg_request_info *ri,
@@ -177,6 +179,7 @@ int main(int argc, char **argv)
     mg_bind_to_uri(ctx, "/s", &stream_page_handler, "9");
     mg_bind_to_uri(ctx, "/si", &stream_info_handler, "10");
     mg_bind_to_uri(ctx, "/ss", &stream_static_handler, "11");
+    mg_bind_to_uri(ctx, "/pcr", &stream_pcr_handler, "12");
 
     mg_bind_to_error_code(ctx, 404, &test_error, NULL);
     ctx = mg_start();
